@@ -46,4 +46,4 @@ RUN chmod -R 777 /app/storage /app/bootstrap/cache
 
 # Railway menggunakan port dinamis via environment variable $PORT
 # Default ke 8080 jika tidak ada
-CMD php -S 0.0.0.0:${PORT:-8080} -t public
+CMD php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-8080}
