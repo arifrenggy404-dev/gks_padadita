@@ -1,8 +1,8 @@
-FROM php:8.5-cli-alpine
+FROM php:8.5-fpm-alpine
 
-# Install tools dan ekstensi yang diperlukan Laravel 13
-# Ditambahkan: nodejs, npm, dan library untuk gd, zip, intl, bcmath
+# Install Nginx, Node.js, npm, and system libraries required by PHP extensions
 RUN apk add --no-cache \
+    nginx \
     git \
     unzip \
     bash \
@@ -14,9 +14,11 @@ RUN apk add --no-cache \
     libjpeg-turbo-dev \
     icu-dev \
     oniguruma-dev \
+    libxml2-dev \
+    curl-dev \
     libxml2-dev
 
-# Install PHP extensions yang dibutuhkan oleh Laravel & packages (phpspreadsheet, dompdf)
+# Install PHP extensions required by Laravel
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install \
     pdo_mysql \
@@ -24,26 +26,60 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     zip \
     intl \
     bcmath \
-    mbstring
+    mbstring \
+    xml \
+    dom \
+    curl \
+    fileinfo
 
-# Install Composer versi terbaru
+# Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 # Set working directory
 WORKDIR /app
 
-# Menyalin seluruh file project ke dalam container
+# Copy all project files
 COPY . /app
 
-# Jalankan Composer Install (tanpa dev dependencies untuk production)
+# Install PHP dependencies (no dev) and build frontend assets
 RUN composer install --no-dev --optimize-autoloader --no-interaction
-
-# Build assets menggunakan Vite (Wajib agar CSS/JS muncul di production)
 RUN npm install && npm run build
 
-# Memastikan izin folder storage dan cache aman
+# Set correct permissions on storage and cache directories
 RUN chmod -R 777 /app/storage /app/bootstrap/cache
 
-# Railway menggunakan port dinamis via environment variable $PORT
-# Default ke 8080 jika tidak ada
-CMD php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-8080}
+# Configure Nginx to listen on port 8080 and proxy PHP requests to PHP-FPM
+RUN mkdir -p /etc/nginx/http.d && printf '\
+server {\n\
+    listen 8080;\n\
+    root /app/public;\n\
+    index index.php index.html;\n\
+\n\
+    location / {\n\
+        try_files $uri $uri/ /index.php?$query_string;\n\
+    }\n\
+\n\
+    location ~ \\.php$ {\n\
+        fastcgi_pass 127.0.0.1:9000;\n\
+        fastcgi_index index.php;\n\
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n\
+        include fastcgi_params;\n\
+    }\n\
+\n\
+    location ~ /\\.ht {\n\
+        deny all;\n\
+    }\n\
+}\n\
+' > /etc/nginx/http.d/default.conf
+
+# Create startup script: run migrations, start PHP-FPM, then start Nginx in foreground
+RUN printf '#!/bin/sh\n\
+set -e\n\
+php /app/artisan migrate --force\n\
+php-fpm -D\n\
+exec nginx -g "daemon off;"\n\
+' > /start.sh && chmod +x /start.sh
+
+EXPOSE 8080
+
+CMD ["/start.sh"]
