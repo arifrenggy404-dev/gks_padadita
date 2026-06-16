@@ -16,7 +16,7 @@ RUN apk add --no-cache \
     oniguruma-dev \
     libxml2-dev \
     curl-dev \
-    libxml2-dev
+    lexbor-dev
 
 # Install PHP extensions required by Laravel
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
